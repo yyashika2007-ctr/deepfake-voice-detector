@@ -7,6 +7,7 @@ to classify uploaded audio as authentic human speech or AI-generated
 
 import time
 import hashlib
+import textwrap
 
 import numpy as np
 import streamlit as st
@@ -47,7 +48,8 @@ FAKE_KEYWORDS = ("fake", "spoof", "synthetic", "ai", "clone", "generated")
 
 def load_css():
     st.markdown(
-        """
+        textwrap.dedent(
+            """\
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
         <style>
@@ -254,7 +256,8 @@ def load_css():
             border-radius: 12px;
         }
         </style>
-        """,
+        """
+        ),
         unsafe_allow_html=True,
     )
 
