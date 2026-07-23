@@ -29,10 +29,12 @@ st.set_page_config(
 # Model config
 # ==========================================
 
-# Fine-tuned Wav2Vec2 model, trained specifically for real-vs-AI speech
-# classification (94.6M params — light enough to run on CPU in Streamlit
-# Cloud, ~99.7% reported accuracy on its own eval set).
-MODEL_ID = "MelodyMachine/Deepfake-audio-detection-V2"
+# Larger Wav2Vec2-XLSR-53 model, specialized for deepfake audio detection
+# and used in third-party audio-deepfake-detection benchmarks alongside
+# AASIST/RawNet2. ~1.26GB — notably heavier than the previous model, so
+# expect slower first-load and a real chance of hitting free-tier RAM
+# limits on Streamlit Community Cloud.
+MODEL_ID = "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification"
 
 SAMPLE_RATE = 16000
 CHUNK_SECONDS = 4
@@ -347,7 +349,16 @@ def footer():
 @st.cache_resource(show_spinner=False)
 def load_model():
     from transformers import pipeline
-    return pipeline("audio-classification", model=MODEL_ID, device=-1)
+    try:
+        return pipeline("audio-classification", model=MODEL_ID, device=-1)
+    except Exception as e:
+        raise RuntimeError(
+            f"Couldn't load the model ({MODEL_ID}). If this is an out-of-memory "
+            f"error, this model (~1.26GB) may be too large for your current "
+            f"hosting plan's free RAM tier — consider Hugging Face Spaces "
+            f"(free CPU tier has much more RAM) or a paid Streamlit Cloud tier. "
+            f"Original error: {e}"
+        )
 
 
 @st.cache_data(show_spinner=False)
