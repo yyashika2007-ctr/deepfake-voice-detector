@@ -1,7 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 streamlit
-numpy
+torch
+transformers
 librosa
-scikit-learn
-joblib
 soundfile
 audioread
+numpy
+plotly
