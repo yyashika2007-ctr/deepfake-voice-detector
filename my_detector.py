@@ -47,7 +47,7 @@ FAKE_KEYWORDS = ("fake", "spoof", "synthetic", "ai", "clone", "generated")
 # ==========================================
 
 def load_css():
-    st.markdown(
+    st.html(
         textwrap.dedent(
             """\
         <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -257,8 +257,7 @@ def load_css():
         }
         </style>
         """
-        ),
-        unsafe_allow_html=True,
+        )
     )
 
 
