@@ -325,11 +325,12 @@ def render_verdict(combined_fake: float, max_fake: float):
     real_pct = 100 - fake_pct
     peak_pct = max_fake * 100
 
-    if peak_pct >= 70:
-        # Even if the overall clip averages out calmer, one strongly
-        # flagged segment is meaningful — e.g. a spliced-in synthetic
-        # portion — and shouldn't get buried under "Inconclusive."
-        css_class, label, verdict, color = "fake", "Verdict", "Synthetic Segment Detected", "#FF5C7A"
+    if peak_pct >= 50:
+        # Even if the overall clip averages out calmer, one segment that's
+        # majority-synthetic is meaningful evidence on its own — e.g. a
+        # spliced-in synthetic portion — and shouldn't get buried under
+        # "Inconclusive" just because the rest of the clip is calmer.
+        css_class, label, verdict, color = "fake", "Verdict", "Likely AI-Generated", "#FF5C7A"
         conf = peak_pct
     elif fake_pct >= 65:
         css_class, label, verdict, color = "fake", "Verdict", "Likely AI-Generated", "#FF5C7A"
@@ -356,7 +357,7 @@ def render_verdict(combined_fake: float, max_fake: float):
         """,
         unsafe_allow_html=True,
     )
-    gauge_value = peak_pct if peak_pct >= 70 else fake_pct
+    gauge_value = peak_pct if peak_pct >= 50 else fake_pct
     return color, gauge_value
 
 
