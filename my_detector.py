@@ -320,11 +320,18 @@ def render_timeline(chunks, chunk_seconds=CHUNK_SECONDS):
     return fig
 
 
-def render_verdict(combined_fake: float):
+def render_verdict(combined_fake: float, max_fake: float):
     fake_pct = combined_fake * 100
     real_pct = 100 - fake_pct
+    peak_pct = max_fake * 100
 
-    if fake_pct >= 65:
+    if peak_pct >= 70:
+        # Even if the overall clip averages out calmer, one strongly
+        # flagged segment is meaningful — e.g. a spliced-in synthetic
+        # portion — and shouldn't get buried under "Inconclusive."
+        css_class, label, verdict, color = "fake", "Verdict", "Synthetic Segment Detected", "#FF5C7A"
+        conf = peak_pct
+    elif fake_pct >= 65:
         css_class, label, verdict, color = "fake", "Verdict", "Likely AI-Generated", "#FF5C7A"
         conf = fake_pct
     elif fake_pct <= 35:
@@ -349,7 +356,8 @@ def render_verdict(combined_fake: float):
         """,
         unsafe_allow_html=True,
     )
-    return color
+    gauge_value = peak_pct if peak_pct >= 70 else fake_pct
+    return color, gauge_value
 
 
 # ==========================================
@@ -405,12 +413,12 @@ if uploaded_file is not None:
         progress.empty()
 
         st.markdown('<div class="vx-section-label">Result</div>', unsafe_allow_html=True)
-        color = render_verdict(result["combined_fake"])
+        color, gauge_value = render_verdict(result["combined_fake"], result["max_fake"])
 
         g_col, t_col = st.columns([1, 1.6])
         with g_col:
             st.plotly_chart(
-                render_gauge(result["combined_fake"] * 100, "#FF5C7A" if result["combined_fake"] >= 0.5 else "#47E0B0"),
+                render_gauge(gauge_value, "#FF5C7A" if gauge_value >= 50 else "#47E0B0"),
                 use_container_width=True,
                 config={"displayModeBar": False},
             )
