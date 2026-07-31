@@ -12,6 +12,7 @@ import os
 import numpy as np
 import streamlit as st
 import librosa
+import joblib
 import plotly.graph_objects as go
 
 # ==========================================
@@ -35,6 +36,18 @@ st.set_page_config(
 # expect slower first-load and a real chance of hitting free-tier RAM
 # limits on Streamlit Community Cloud.
 MODEL_ID = "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification"
+
+# Classical ML model (RandomForest on MFCC/chroma/spectral features),
+# trained separately via a scikit-learn script. Optional: if this file
+# isn't found next to the app, the app falls back to Wav2Vec2 alone.
+RF_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_detector.pkl")
+
+# How much weight each model gets in the blended score. The deep model
+# generally handles varied real-world audio better, so it gets more say;
+# the classical model still contributes a genuinely different signal
+# (spectral/timbral features) that can catch things the other misses.
+WAV2VEC_WEIGHT = 0.65
+RF_WEIGHT = 0.35
 
 SAMPLE_RATE = 16000
 CHUNK_SECONDS = 4
@@ -153,8 +166,54 @@ def load_model():
         )
 
 
-@st.cache_data(show_spinner=False)
-def load_audio(file_bytes: bytes):
+@st.cache_resource(show_spinner=False)
+def load_rf_model():
+    """Loads the classical RandomForest model if present. Returns None
+    (rather than raising) if it's missing, so the app still works with
+    Wav2Vec2 alone — the ensemble is a bonus, not a hard requirement."""
+    if not os.path.exists(RF_MODEL_PATH):
+        return None
+    try:
+        return joblib.load(RF_MODEL_PATH)
+    except Exception:
+        return None
+
+
+def extract_classical_features(audio: np.ndarray, sr: int = SAMPLE_RATE):
+    """Mirrors the exact feature set/order used to train voice_detector.pkl:
+    MFCC(40) + chroma(12) + spectral contrast(7) + ZCR(1) + RMS(1) +
+    spectral centroid(1) + bandwidth(1) + rolloff(1) = 64 features.
+    Must stay in sync with the training script or predictions will be
+    garbage — the model has no idea the feature order changed."""
+    audio = librosa.util.normalize(audio)
+
+    mfcc = np.mean(librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40).T, axis=0)
+    chroma = np.mean(librosa.feature.chroma_stft(y=audio, sr=sr).T, axis=0)
+    contrast = np.mean(librosa.feature.spectral_contrast(y=audio, sr=sr).T, axis=0)
+    zcr = np.mean(librosa.feature.zero_crossing_rate(audio))
+    rms = np.mean(librosa.feature.rms(y=audio))
+    centroid = np.mean(librosa.feature.spectral_centroid(y=audio, sr=sr))
+    bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=sr))
+    rolloff = np.mean(librosa.feature.spectral_rolloff(y=audio, sr=sr))
+
+    return np.hstack([mfcc, chroma, contrast, zcr, rms, centroid, bandwidth, rolloff])
+
+
+def score_chunk_rf(rf_model, chunk: np.ndarray):
+    """Returns fake probability from the classical model, or None if
+    the model isn't available / the chunk is too short to feature-ize."""
+    if rf_model is None:
+        return None
+    try:
+        features = extract_classical_features(chunk).reshape(1, -1)
+        proba = rf_model.predict_proba(features)[0]
+        # Trained with 0=real, 1=fake (matches the training script).
+        return float(proba[1])
+    except Exception:
+        return None
+
+
+
     import io
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=SAMPLE_RATE, mono=True)
     return y
@@ -212,6 +271,7 @@ def analyze(file_bytes: bytes, status, progress):
     status.info("Loading Wav2Vec2 model...")
     progress.progress(10)
     pipe = load_model()
+    rf_model = load_rf_model()
 
     status.info("Decoding and resampling audio...")
     progress.progress(30)
@@ -238,8 +298,21 @@ def analyze(file_bytes: bytes, status, progress):
     status.info(f"Scoring {len(chunks)} segment(s)...")
     results = []
     for i, (t, chunk) in enumerate(chunks):
-        real_p, fake_p = score_chunk(pipe, chunk)
-        results.append({"time": t, "real": real_p, "fake": fake_p})
+        dl_real, dl_fake = score_chunk(pipe, chunk)
+        rf_fake = score_chunk_rf(rf_model, chunk)
+
+        if rf_fake is not None:
+            ensemble_fake = WAV2VEC_WEIGHT * dl_fake + RF_WEIGHT * rf_fake
+        else:
+            ensemble_fake = dl_fake
+
+        results.append({
+            "time": t,
+            "real": dl_real,
+            "fake": ensemble_fake,
+            "dl_fake": dl_fake,
+            "rf_fake": rf_fake,
+        })
         progress.progress(45 + int(45 * (i + 1) / len(chunks)))
 
     status.success("Analysis complete!")
@@ -260,6 +333,7 @@ def analyze(file_bytes: bytes, status, progress):
         "max_fake": max_fake,
         "mean_real": mean_real,
         "combined_fake": combined_fake,
+        "rf_available": rf_model is not None,
     }
 
 
@@ -432,7 +506,16 @@ if uploaded_file is not None:
             st.plotly_chart(render_timeline(result["chunks"]), use_container_width=True, config={"displayModeBar": False})
 
         with st.expander("Technical details"):
-            st.markdown(f"**Model:** `{MODEL_ID}` (Wav2Vec2, fine-tuned for real vs. AI-generated speech)")
+            if result["rf_available"]:
+                st.markdown(
+                    f"**Models:** `{MODEL_ID}` (Wav2Vec2, weight {WAV2VEC_WEIGHT}) "
+                    f"+ `voice_detector.pkl` (RandomForest on MFCC/spectral features, weight {RF_WEIGHT})"
+                )
+            else:
+                st.markdown(
+                    f"**Model:** `{MODEL_ID}` (Wav2Vec2 only — `voice_detector.pkl` not found next to the app, "
+                    f"so the classical model is skipped)"
+                )
             st.markdown(f"**Sample rate:** {SAMPLE_RATE} Hz &nbsp;|&nbsp; **Segment length:** {CHUNK_SECONDS}s")
             st.markdown(f"**Decoded duration:** {result['duration']:.2f}s &nbsp;|&nbsp; **Signal RMS:** {result['rms']:.4f}")
             st.markdown(
@@ -440,10 +523,12 @@ if uploaded_file is not None:
                 f"**Peak segment:** {result['max_fake']*100:.1f}% &nbsp;|&nbsp; "
                 f"**Weighted score:** {result['combined_fake']*100:.1f}%"
             )
-            st.markdown("**Per-segment scores:**")
+            st.markdown("**Per-segment scores (ensemble &nbsp;|&nbsp; Wav2Vec2 &nbsp;|&nbsp; RandomForest):**")
             for c in result["chunks"]:
+                rf_txt = f"{c['rf_fake']*100:.1f}%" if c["rf_fake"] is not None else "n/a"
                 st.markdown(
-                    f'<span class="mono vx-muted">t={c["time"]:.1f}s → real {c["real"]*100:.1f}% / synthetic {c["fake"]*100:.1f}%</span>',
+                    f'<span class="mono vx-muted">t={c["time"]:.1f}s → ensemble {c["fake"]*100:.1f}% '
+                    f'&nbsp;|&nbsp; wav2vec2 {c["dl_fake"]*100:.1f}% &nbsp;|&nbsp; rf {rf_txt}</span>',
                     unsafe_allow_html=True,
                 )
 
