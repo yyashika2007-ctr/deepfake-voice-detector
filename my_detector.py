@@ -213,7 +213,8 @@ def score_chunk_rf(rf_model, chunk: np.ndarray):
         return None
 
 
-
+@st.cache_data(show_spinner=False)
+def load_audio(file_bytes: bytes):
     import io
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=SAMPLE_RATE, mono=True)
     return y
