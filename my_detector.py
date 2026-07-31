@@ -4,70 +4,70 @@ A single-file Streamlit app that uses a fine-tuned Wav2Vec2 model
 to classify uploaded audio as authentic human speech or AI-generated
 (synthetic / deepfake) speech.
 """
-
+ 
 import time
 import hashlib
 import os
-
+ 
 import numpy as np
 import streamlit as st
 import librosa
 import joblib
 import plotly.graph_objects as go
-
+ 
 # ==========================================
 # Page Configuration
 # ==========================================
-
+ 
 st.set_page_config(
     page_title="VoxShield AI — Deepfake Voice Detector",
     page_icon="🛰️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
+ 
 # ==========================================
 # Model config
 # ==========================================
-
+ 
 # Larger Wav2Vec2-XLSR-53 model, specialized for deepfake audio detection
 # and used in third-party audio-deepfake-detection benchmarks alongside
 # AASIST/RawNet2. ~1.26GB — notably heavier than the previous model, so
 # expect slower first-load and a real chance of hitting free-tier RAM
 # limits on Streamlit Community Cloud.
 MODEL_ID = "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification"
-
+ 
 # Classical ML model (RandomForest on MFCC/chroma/spectral features),
 # trained separately via a scikit-learn script. Optional: if this file
 # isn't found next to the app, the app falls back to Wav2Vec2 alone.
 RF_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_detector.pkl")
-
+ 
 # How much weight each model gets in the blended score. The deep model
 # generally handles varied real-world audio better, so it gets more say;
 # the classical model still contributes a genuinely different signal
 # (spectral/timbral features) that can catch things the other misses.
 WAV2VEC_WEIGHT = 0.65
 RF_WEIGHT = 0.35
-
+ 
 SAMPLE_RATE = 16000
 CHUNK_SECONDS = 4
 MIN_AUDIO_SECONDS = 1.0
-
+ 
 REAL_KEYWORDS = ("real", "bona", "genuine", "human", "live")
 FAKE_KEYWORDS = ("fake", "spoof", "synthetic", "ai", "clone", "generated")
-
-
+ 
+ 
 # ==========================================
 # Theme / CSS
 # ==========================================
-
+ 
 def load_css():
     css_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "style.css")
     with open(css_path, "r", encoding="utf-8") as f:
         css = f.read()
     st.html(f"<style>{css}</style>")
-
-
+ 
+ 
 def navbar():
     st.markdown(
         """
@@ -78,8 +78,8 @@ def navbar():
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 def hero():
     bars = "".join(
         f'<span style="height:{h}%; animation-delay:{d}s;"></span>'
@@ -101,8 +101,8 @@ def hero():
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 def feature_cards():
     c1, c2, c3 = st.columns(3)
     cards = [
@@ -131,8 +131,8 @@ def feature_cards():
                 """,
                 unsafe_allow_html=True,
             )
-
-
+ 
+ 
 def footer():
     st.markdown(
         """
@@ -145,12 +145,12 @@ def footer():
         """,
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 # ==========================================
 # Model + inference
 # ==========================================
-
+ 
 @st.cache_resource(show_spinner=False)
 def load_model():
     from transformers import pipeline
@@ -164,8 +164,8 @@ def load_model():
             f"(free CPU tier has much more RAM) or a paid Streamlit Cloud tier. "
             f"Original error: {e}"
         )
-
-
+ 
+ 
 @st.cache_resource(show_spinner=False)
 def load_rf_model():
     """Loads the classical RandomForest model if present. Returns None
@@ -177,8 +177,8 @@ def load_rf_model():
         return joblib.load(RF_MODEL_PATH)
     except Exception:
         return None
-
-
+ 
+ 
 def extract_classical_features(audio: np.ndarray, sr: int = SAMPLE_RATE):
     """Mirrors the exact feature set/order used to train voice_detector.pkl:
     MFCC(40) + chroma(12) + spectral contrast(7) + ZCR(1) + RMS(1) +
@@ -186,7 +186,7 @@ def extract_classical_features(audio: np.ndarray, sr: int = SAMPLE_RATE):
     Must stay in sync with the training script or predictions will be
     garbage — the model has no idea the feature order changed."""
     audio = librosa.util.normalize(audio)
-
+ 
     mfcc = np.mean(librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40).T, axis=0)
     chroma = np.mean(librosa.feature.chroma_stft(y=audio, sr=sr).T, axis=0)
     contrast = np.mean(librosa.feature.spectral_contrast(y=audio, sr=sr).T, axis=0)
@@ -195,10 +195,10 @@ def extract_classical_features(audio: np.ndarray, sr: int = SAMPLE_RATE):
     centroid = np.mean(librosa.feature.spectral_centroid(y=audio, sr=sr))
     bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=sr))
     rolloff = np.mean(librosa.feature.spectral_rolloff(y=audio, sr=sr))
-
+ 
     return np.hstack([mfcc, chroma, contrast, zcr, rms, centroid, bandwidth, rolloff])
-
-
+ 
+ 
 def score_chunk_rf(rf_model, chunk: np.ndarray):
     """Returns fake probability from the classical model, or None if
     the model isn't available / the chunk is too short to feature-ize."""
@@ -211,24 +211,24 @@ def score_chunk_rf(rf_model, chunk: np.ndarray):
         return float(proba[1])
     except Exception:
         return None
-
-
+ 
+ 
 @st.cache_data(show_spinner=False)
 def load_audio(file_bytes: bytes):
     import io
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=SAMPLE_RATE, mono=True)
     return y
-
-
+ 
+ 
 def chunk_audio(y: np.ndarray, sr: int = SAMPLE_RATE, chunk_seconds: int = CHUNK_SECONDS):
     chunk_len = chunk_seconds * sr
     min_len = int(MIN_AUDIO_SECONDS * sr)
-
+ 
     if len(y) < min_len:
         # pad very short clips by looping so the model has enough signal
         reps = int(np.ceil(min_len / max(len(y), 1)))
         y = np.tile(y, reps)[:min_len]
-
+ 
     chunks = []
     for start in range(0, len(y), chunk_len):
         chunk = y[start:start + chunk_len]
@@ -238,14 +238,14 @@ def chunk_audio(y: np.ndarray, sr: int = SAMPLE_RATE, chunk_seconds: int = CHUNK
                 chunks.append((start / sr, chunk))
             break
         chunks.append((start / sr, chunk))
-
+ 
     return chunks if chunks else [(0.0, y)]
-
-
+ 
+ 
 def score_chunk(pipe, chunk: np.ndarray):
     """Returns (real_prob, fake_prob) for one audio chunk."""
     outputs = pipe({"array": chunk, "sampling_rate": SAMPLE_RATE}, top_k=None)
-
+ 
     real_p, fake_p = None, None
     for o in outputs:
         label = o["label"].lower()
@@ -253,7 +253,7 @@ def score_chunk(pipe, chunk: np.ndarray):
             fake_p = o["score"]
         elif any(k in label for k in REAL_KEYWORDS):
             real_p = o["score"]
-
+ 
     # Fallback if label text didn't match known keywords: assume index
     # convention label_0 = real, label_1 = fake (common for these models).
     if real_p is None or fake_p is None:
@@ -264,21 +264,21 @@ def score_chunk(pipe, chunk: np.ndarray):
         else:
             fake_p = outputs_sorted[0]["score"]
             real_p = 1 - fake_p
-
+ 
     return real_p, fake_p
-
-
+ 
+ 
 def analyze(file_bytes: bytes, status, progress):
     status.info("Loading Wav2Vec2 model...")
     progress.progress(10)
     pipe = load_model()
     rf_model = load_rf_model()
-
+ 
     status.info("Decoding and resampling audio...")
     progress.progress(30)
     y = load_audio(file_bytes)
     duration = len(y) / SAMPLE_RATE
-
+ 
     # Sanity check: a failed/garbled decode (common cause: missing ffmpeg
     # on the host, which mp3/m4a need) produces near-silent or empty audio.
     # If we score that, the model tends to return one very confident but
@@ -291,22 +291,22 @@ def analyze(file_bytes: bytes, status, progress):
             f"rather than a real result — try a WAV file, or make sure ffmpeg is "
             f"installed on the server for MP3/M4A support."
         )
-
+ 
     status.info("Splitting into segments...")
     progress.progress(45)
     chunks = chunk_audio(y)
-
+ 
     status.info(f"Scoring {len(chunks)} segment(s)...")
     results = []
     for i, (t, chunk) in enumerate(chunks):
         dl_real, dl_fake = score_chunk(pipe, chunk)
         rf_fake = score_chunk_rf(rf_model, chunk)
-
+ 
         if rf_fake is not None:
             ensemble_fake = WAV2VEC_WEIGHT * dl_fake + RF_WEIGHT * rf_fake
         else:
             ensemble_fake = dl_fake
-
+ 
         results.append({
             "time": t,
             "real": dl_real,
@@ -315,10 +315,10 @@ def analyze(file_bytes: bytes, status, progress):
             "rf_fake": rf_fake,
         })
         progress.progress(45 + int(45 * (i + 1) / len(chunks)))
-
+ 
     status.success("Analysis complete!")
     progress.progress(100)
-
+ 
     mean_fake = float(np.mean([r["fake"] for r in results]))
     max_fake = float(np.max([r["fake"] for r in results]))
     mean_real = 1 - mean_fake
@@ -336,12 +336,12 @@ def analyze(file_bytes: bytes, status, progress):
         "combined_fake": combined_fake,
         "rf_available": rf_model is not None,
     }
-
-
+ 
+ 
 # ==========================================
 # Result rendering
 # ==========================================
-
+ 
 def render_gauge(confidence_pct: float, color: str):
     fig = go.Figure(
         go.Indicator(
@@ -366,13 +366,13 @@ def render_gauge(confidence_pct: float, color: str):
         font={"color": "#E9EDF7"},
     )
     return fig
-
-
+ 
+ 
 def render_timeline(chunks, chunk_seconds=CHUNK_SECONDS):
     times = [f"{int(c['time'])}s–{int(c['time']) + chunk_seconds}s" for c in chunks]
     fake_scores = [round(c["fake"] * 100, 1) for c in chunks]
     colors = ["#FF5C7A" if f >= 50 else "#47E0B0" for f in fake_scores]
-
+ 
     fig = go.Figure(
         go.Bar(
             x=times,
@@ -393,13 +393,13 @@ def render_timeline(chunks, chunk_seconds=CHUNK_SECONDS):
         showlegend=False,
     )
     return fig
-
-
+ 
+ 
 def render_verdict(combined_fake: float, max_fake: float):
     fake_pct = combined_fake * 100
     real_pct = 100 - fake_pct
     peak_pct = max_fake * 100
-
+ 
     if peak_pct >= 50:
         # Even if the overall clip averages out calmer, one segment that's
         # majority-synthetic is meaningful evidence on its own — e.g. a
@@ -407,16 +407,16 @@ def render_verdict(combined_fake: float, max_fake: float):
         # "Inconclusive" just because the rest of the clip is calmer.
         css_class, label, verdict, color = "fake", "Verdict", "Likely AI-Generated", "#FF5C7A"
         conf = peak_pct
-    elif fake_pct >= 65:
+    elif fake_pct >= 55:
         css_class, label, verdict, color = "fake", "Verdict", "Likely AI-Generated", "#FF5C7A"
         conf = fake_pct
-    elif fake_pct <= 35:
+    elif fake_pct <= 45:
         css_class, label, verdict, color = "real", "Verdict", "Likely Authentic", "#47E0B0"
         conf = real_pct
     else:
         css_class, label, verdict, color = "warn", "Verdict", "Inconclusive", "#F5B942"
         conf = max(fake_pct, real_pct)
-
+ 
     st.markdown(
         f"""
         <div class="vx-verdict {css_class}">
@@ -434,29 +434,29 @@ def render_verdict(combined_fake: float, max_fake: float):
     )
     gauge_value = peak_pct if peak_pct >= 50 else fake_pct
     return color, gauge_value
-
-
+ 
+ 
 # ==========================================
 # App
 # ==========================================
-
+ 
 load_css()
 navbar()
 hero()
 feature_cards()
-
+ 
 st.markdown('<div class="vx-section-label">Upload audio</div>', unsafe_allow_html=True)
-
+ 
 uploaded_file = st.file_uploader(
     "",
     type=["wav", "mp3", "m4a", "ogg", "flac"],
     help="Supported formats: WAV, MP3, M4A, OGG, FLAC",
     label_visibility="collapsed",
 )
-
+ 
 if uploaded_file is not None:
     file_bytes = uploaded_file.getvalue()
-
+ 
     st.markdown('<div class="vx-audiocard">', unsafe_allow_html=True)
     st.audio(file_bytes)
     col1, col2, col3 = st.columns(3)
@@ -470,27 +470,27 @@ if uploaded_file is not None:
         st.markdown('<div class="vx-muted">FORMAT</div>', unsafe_allow_html=True)
         st.markdown(f"**{uploaded_file.type or 'audio'}**")
     st.markdown("</div>", unsafe_allow_html=True)
-
+ 
     st.markdown("<br>", unsafe_allow_html=True)
     analyze_clicked = st.button("🔍 Analyze Voice")
-
+ 
     if analyze_clicked:
         progress = st.progress(0)
         status = st.empty()
-
+ 
         try:
             result = analyze(file_bytes, status, progress)
         except Exception as e:
             status.error(f"Analysis failed: {e}")
             st.stop()
-
+ 
         time.sleep(0.3)
         status.empty()
         progress.empty()
-
+ 
         st.markdown('<div class="vx-section-label">Result</div>', unsafe_allow_html=True)
         color, gauge_value = render_verdict(result["combined_fake"], result["max_fake"])
-
+ 
         g_col, t_col = st.columns([1, 1.6])
         with g_col:
             st.plotly_chart(
@@ -505,7 +505,7 @@ if uploaded_file is not None:
             )
         with t_col:
             st.plotly_chart(render_timeline(result["chunks"]), use_container_width=True, config={"displayModeBar": False})
-
+ 
         with st.expander("Technical details"):
             if result["rf_available"]:
                 st.markdown(
@@ -532,9 +532,10 @@ if uploaded_file is not None:
                     f'&nbsp;|&nbsp; wav2vec2 {c["dl_fake"]*100:.1f}% &nbsp;|&nbsp; rf {rf_txt}</span>',
                     unsafe_allow_html=True,
                 )
-
+ 
 else:
     st.markdown("<br>", unsafe_allow_html=True)
     st.info("👆 Upload an audio file to begin analysis.")
-
+ 
 footer()
+ 
